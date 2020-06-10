@@ -1,0 +1,649 @@
+diff -Nru spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/ConfigurableJtaPlatform.java spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/ConfigurableJtaPlatform.java
+--- spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/ConfigurableJtaPlatform.java	2016-12-21 19:42:08.000000000 +0100
++++ spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/ConfigurableJtaPlatform.java	2016-12-22 20:34:41.500296971 +0100
+@@ -16,60 +16,133 @@
+ 
+ package org.springframework.orm.hibernate4;
+ 
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Method;
++import java.lang.reflect.Proxy;
++import javax.transaction.Status;
++import javax.transaction.Synchronization;
++import javax.transaction.SystemException;
++import javax.transaction.Transaction;
+ import javax.transaction.TransactionManager;
++import javax.transaction.TransactionSynchronizationRegistry;
+ import javax.transaction.UserTransaction;
+ 
+-import org.hibernate.service.jta.platform.internal.AbstractJtaPlatform;
++import org.hibernate.TransactionException;
++import org.hibernate.service.Service;
+ 
+ import org.springframework.transaction.jta.UserTransactionAdapter;
+ import org.springframework.util.Assert;
+ 
+ /**
+- * Implementation of Hibernate 4's {@link org.hibernate.service.jta.platform.spi.JtaPlatform}
+- * SPI, exposing passed-in {@link TransactionManager} and {@link UserTransaction} references.
++ * Implementation of Hibernate 4's JtaPlatform SPI (which has a different package
++ * location in Hibernate 4.0-4.2 vs 4.3), exposing passed-in {@link TransactionManager},
++ * {@link UserTransaction} and {@link TransactionSynchronizationRegistry} references.
+  *
+  * @author Juergen Hoeller
+  * @since 3.1.2
+  */
+-@SuppressWarnings("serial")
+-class ConfigurableJtaPlatform extends AbstractJtaPlatform {
++@SuppressWarnings({"serial", "unchecked"})
++class ConfigurableJtaPlatform implements InvocationHandler {
++
++	static final Class<? extends Service> jtaPlatformClass;
++
++	static {
++		Class<?> jpClass;
++		try {
++			// Try Hibernate 4.0-4.2 JtaPlatform variant
++			jpClass = SpringSessionContext.class.getClassLoader().loadClass(
++					"org.hibernate.service.jta.platform.spi.JtaPlatform");
++		}
++		catch (ClassNotFoundException ex) {
++			try {
++				// Try Hibernate 4.3 JtaPlatform variant
++				jpClass = SpringSessionContext.class.getClassLoader().loadClass(
++						"org.hibernate.engine.transaction.jta.platform.spi.JtaPlatform");
++			}
++			catch (ClassNotFoundException ex2) {
++				throw new IllegalStateException("Neither Hibernate 4.0-4.2 nor 4.3 variant of JtaPlatform found");
++			}
++		}
++		jtaPlatformClass = (Class<? extends Service>) jpClass;
++	}
++
++	static String getJtaPlatformBasePackage() {
++		String className = jtaPlatformClass.getName();
++		return className.substring(0, className.length() - "spi.JtaPlatform".length());
++	}
+ 
+ 	private final TransactionManager transactionManager;
+ 
+ 	private final UserTransaction userTransaction;
+ 
++	private final TransactionSynchronizationRegistry transactionSynchronizationRegistry;
+ 
+ 	/**
+ 	 * Create a new ConfigurableJtaPlatform instance with the given
+ 	 * JTA TransactionManager and optionally a given UserTransaction.
+ 	 * @param tm the JTA TransactionManager reference (required)
+ 	 * @param ut the JTA UserTransaction reference (optional)
++	 * @param tsr the JTA 1.1 TransactionSynchronizationRegistry (optional)
+ 	 */
+-	public ConfigurableJtaPlatform(TransactionManager tm, UserTransaction ut) {
++	public ConfigurableJtaPlatform(TransactionManager tm, UserTransaction ut, TransactionSynchronizationRegistry tsr) {
+ 		Assert.notNull(tm, "TransactionManager reference must not be null");
+ 		this.transactionManager = tm;
+ 		this.userTransaction = (ut != null ? ut : new UserTransactionAdapter(tm));
++		this.transactionSynchronizationRegistry = tsr;
+ 	}
+ 
+ 
+-	@Override
+-	protected TransactionManager locateTransactionManager() {
++	public TransactionManager retrieveTransactionManager() {
+ 		return this.transactionManager;
+ 	}
+ 
+-	@Override
+-	protected UserTransaction locateUserTransaction() {
++	public UserTransaction retrieveUserTransaction() {
+ 		return this.userTransaction;
+ 	}
+ 
+-	@Override
+-	protected boolean canCacheTransactionManager() {
+-		return true;
++	public Object getTransactionIdentifier(Transaction transaction) {
++		return transaction;
++ 	}
++ 
++	public boolean canRegisterSynchronization() {
++		try {
++			return (this.transactionManager.getStatus() == Status.STATUS_ACTIVE);
++		}
++		catch (SystemException ex) {
++			throw new TransactionException("Could not determine JTA transaction status", ex);
++		}
++	}
++
++	public void registerSynchronization(Synchronization synchronization) {
++		if (this.transactionSynchronizationRegistry != null) {
++			this.transactionSynchronizationRegistry.registerInterposedSynchronization(synchronization);
++		}
++		else {
++			try {
++				this.transactionManager.getTransaction().registerSynchronization(synchronization);
++			}
++			catch (Exception ex) {
++				throw new TransactionException("Could not access JTA Transaction to register synchronization", ex);
++			}
++		}
++	}
++
++	public int getCurrentStatus() throws SystemException {
++		return this.transactionManager.getStatus();
+ 	}
+ 
+-	@Override
+-	protected boolean canCacheUserTransaction() {
+-		return true;
++	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
++		Method targetMethod = getClass().getMethod(method.getName(), method.getParameterTypes());
++		return targetMethod.invoke(this, args);
+ 	}
+ 
++	/**
++	 * Obtain a proxy that implements the current Hibernate version's JtaPlatform interface
++	 * in the right package location, delegating all invocations to the same-named methods
++	 * on this ConfigurableJtaPlatform class itself.
++	 */
++	public Object getJtaPlatformProxy() {
++		return Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[] {jtaPlatformClass}, this);
++ 	}
++
+ }
+diff -Nru spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/LocalSessionFactoryBuilder.java spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/LocalSessionFactoryBuilder.java
+--- spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/LocalSessionFactoryBuilder.java	2016-12-21 19:42:08.000000000 +0100
++++ spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/LocalSessionFactoryBuilder.java	2016-12-22 20:38:31.548142550 +0100
+@@ -30,7 +30,6 @@
+ import org.hibernate.cfg.Configuration;
+ import org.hibernate.cfg.Environment;
+ import org.hibernate.engine.transaction.internal.jta.CMTTransactionFactory;
+-import org.hibernate.service.jta.platform.internal.WebSphereExtendedJtaPlatform;
+ 
+ import org.springframework.core.io.Resource;
+ import org.springframework.core.io.ResourceLoader;
+@@ -127,7 +126,7 @@
+ 	 * instructing Hibernate to interact with externally managed transactions.
+ 	 * <p>A passed-in Spring {@link JtaTransactionManager} needs to contain a JTA
+ 	 * {@link TransactionManager} reference to be usable here, except for the WebSphere
+-	 * case where we'll automatically set {@link WebSphereExtendedJtaPlatform} accordingly.
++	 * case where we'll automatically set {@code WebSphereExtendedJtaPlatform} accordingly.
+ 	 * <p>Note: If this is set, the Hibernate settings should not contain a JTA platform
+ 	 * setting to avoid meaningless double configuration.
+ 	 */
+@@ -136,7 +135,8 @@
+ 		if (jtaTransactionManager instanceof JtaTransactionManager) {
+ 			boolean webspherePresent = ClassUtils.isPresent("com.ibm.wsspi.uow.UOWManager", getClass().getClassLoader());
+ 			if (webspherePresent) {
+-				getProperties().put(AvailableSettings.JTA_PLATFORM, new WebSphereExtendedJtaPlatform());
++				getProperties().put(AvailableSettings.JTA_PLATFORM,
++						ConfigurableJtaPlatform.getJtaPlatformBasePackage() + "internal.WebSphereExtendedJtaPlatform");
+ 			}
+ 			else {
+ 				JtaTransactionManager jtaTm = (JtaTransactionManager) jtaTransactionManager;
+@@ -145,12 +145,13 @@
+ 							"Can only apply JtaTransactionManager which has a TransactionManager reference set");
+ 				}
+ 				getProperties().put(AvailableSettings.JTA_PLATFORM,
+-						new ConfigurableJtaPlatform(jtaTm.getTransactionManager(), jtaTm.getUserTransaction()));
++						new ConfigurableJtaPlatform(jtaTm.getTransactionManager(), jtaTm.getUserTransaction(),
++								jtaTm.getTransactionSynchronizationRegistry()).getJtaPlatformProxy());
+ 			}
+ 		}
+ 		else if (jtaTransactionManager instanceof TransactionManager) {
+ 			getProperties().put(AvailableSettings.JTA_PLATFORM,
+-					new ConfigurableJtaPlatform((TransactionManager) jtaTransactionManager, null));
++					new ConfigurableJtaPlatform((TransactionManager) jtaTransactionManager, null, null).getJtaPlatformProxy());
+ 		}
+ 		else {
+ 			throw new IllegalArgumentException(
+diff -Nru spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SessionFactoryUtils.java spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SessionFactoryUtils.java
+--- spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SessionFactoryUtils.java	2016-12-21 19:42:08.000000000 +0100
++++ spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SessionFactoryUtils.java	2016-12-23 10:44:05.095253068 +0100
+@@ -16,6 +16,7 @@
+ 
+ package org.springframework.orm.hibernate4;
+ 
++import java.lang.reflect.Method;
+ import javax.sql.DataSource;
+ 
+ import org.apache.commons.logging.Log;
+@@ -41,7 +42,7 @@
+ import org.hibernate.exception.JDBCConnectionException;
+ import org.hibernate.exception.LockAcquisitionException;
+ import org.hibernate.exception.SQLGrammarException;
+-import org.hibernate.service.jdbc.connections.spi.ConnectionProvider;
++import org.hibernate.service.spi.Wrapped;
+ 
+ import org.springframework.dao.CannotAcquireLockException;
+ import org.springframework.dao.DataAccessException;
+@@ -52,6 +53,8 @@
+ import org.springframework.dao.InvalidDataAccessApiUsageException;
+ import org.springframework.dao.InvalidDataAccessResourceUsageException;
+ import org.springframework.jdbc.datasource.DataSourceUtils;
++import org.springframework.util.ClassUtils;
++import org.springframework.util.ReflectionUtils;
+ 
+ /**
+  * Helper class featuring methods for Hibernate Session handling.
+@@ -78,6 +81,11 @@
+ 
+ 	static final Log logger = LogFactory.getLog(SessionFactoryUtils.class);
+ 
++	/**
++	 * Bridging between the different ConnectionProvider package location in 4.0-4.2 vs 4.3.
++	 */
++	private static final Method getConnectionProviderMethod =
++			ClassUtils.getMethodIfAvailable(SessionFactoryImplementor.class, "getConnectionProvider");
+ 
+ 	/**
+ 	 * Determine the DataSource of the given SessionFactory.
+@@ -86,8 +94,8 @@
+ 	 * @see org.hibernate.engine.spi.SessionFactoryImplementor#getConnectionProvider
+ 	 */
+ 	public static DataSource getDataSource(SessionFactory sessionFactory) {
+-		if (sessionFactory instanceof SessionFactoryImplementor) {
+-			ConnectionProvider cp = ((SessionFactoryImplementor) sessionFactory).getConnectionProvider();
++		if (getConnectionProviderMethod != null && sessionFactory instanceof SessionFactoryImplementor) {
++			Wrapped cp = (Wrapped) ReflectionUtils.invokeMethod(getConnectionProviderMethod, sessionFactory);
+ 			return cp.unwrap(DataSource.class);
+ 		}
+ 		return null;
+diff -Nru spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SpringSessionContext.java spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SpringSessionContext.java
+--- spring-framework-3.2.18.RELEASE/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SpringSessionContext.java	2016-12-21 19:42:08.000000000 +0100
++++ spring-framework-3.2.18.RELEASE.hibernate4.3/spring-orm-hibernate4/src/main/java/org/springframework/orm/hibernate4/SpringSessionContext.java	2016-12-22 20:45:06.119514785 +0100
+@@ -16,16 +16,16 @@
+ 
+ package org.springframework.orm.hibernate4;
+ 
+-import javax.transaction.TransactionManager;
++import java.lang.reflect.Method;
+ 
+ import org.hibernate.FlushMode;
+ import org.hibernate.HibernateException;
+ import org.hibernate.Session;
+ import org.hibernate.context.spi.CurrentSessionContext;
+ import org.hibernate.engine.spi.SessionFactoryImplementor;
+-import org.hibernate.service.jta.platform.spi.JtaPlatform;
+ 
+ import org.springframework.transaction.support.TransactionSynchronizationManager;
++import org.springframework.util.ReflectionUtils;
+ 
+ /**
+  * Implementation of Hibernate 3.1's CurrentSessionContext interface
+@@ -44,7 +44,7 @@
+ 
+ 	private final SessionFactoryImplementor sessionFactory;
+ 
+-	private final CurrentSessionContext jtaSessionContext;
++	private CurrentSessionContext jtaSessionContext;
+ 
+ 
+ 	/**
+@@ -53,15 +53,24 @@
+ 	 */
+ 	public SpringSessionContext(SessionFactoryImplementor sessionFactory) {
+ 		this.sessionFactory = sessionFactory;
+-		JtaPlatform jtaPlatform = sessionFactory.getServiceRegistry().getService(JtaPlatform.class);
+-		TransactionManager transactionManager = jtaPlatform.retrieveTransactionManager();
+-		this.jtaSessionContext = (transactionManager != null ? new SpringJtaSessionContext(sessionFactory) : null);
++		try {
++			Object jtaPlatform = sessionFactory.getServiceRegistry().getService(ConfigurableJtaPlatform.jtaPlatformClass);
++			Method rtmMethod = ConfigurableJtaPlatform.jtaPlatformClass.getMethod("retrieveTransactionManager");
++			Object transactionManager = ReflectionUtils.invokeMethod(rtmMethod, jtaPlatform);
++			if (transactionManager != null) {
++				this.jtaSessionContext = new SpringJtaSessionContext(sessionFactory);
++			}
++		}
++		catch (Exception ex) {
++			throw new IllegalStateException("Could not introspect Hibernate JtaPlatform for SpringJtaSessionContext", ex);
++		}
+ 	}
+ 
+ 
+ 	/**
+ 	 * Retrieve the Spring-managed Session for the current thread, if any.
+ 	 */
++	@Override
+ 	public Session currentSession() throws HibernateException {
+ 		Object value = TransactionSynchronizationManager.getResource(this.sessionFactory);
+ 		if (value instanceof Session) {
+@@ -70,15 +79,15 @@
+ 		else if (value instanceof SessionHolder) {
+ 			SessionHolder sessionHolder = (SessionHolder) value;
+ 			Session session = sessionHolder.getSession();
+-			if (!sessionHolder.isSynchronizedWithTransaction() &&
+-					TransactionSynchronizationManager.isSynchronizationActive()) {
++			if (TransactionSynchronizationManager.isSynchronizationActive() &&
++					!sessionHolder.isSynchronizedWithTransaction()) {
+ 				TransactionSynchronizationManager.registerSynchronization(
+ 						new SpringSessionSynchronization(sessionHolder, this.sessionFactory));
+ 				sessionHolder.setSynchronizedWithTransaction(true);
+ 				// Switch to FlushMode.AUTO, as we have to assume a thread-bound Session
+ 				// with FlushMode.MANUAL, which needs to allow flushing within the transaction.
+ 				FlushMode flushMode = session.getFlushMode();
+-				if (FlushMode.isManualFlushMode(flushMode) &&
++				if (flushMode.equals(FlushMode.MANUAL) &&
+ 						!TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+ 					session.setFlushMode(FlushMode.AUTO);
+ 					sessionHolder.setPreviousFlushMode(flushMode);
+diff -Nru spring-framework-3.2.18.RELEASE/spring-tx/src/main/java/org/springframework/transaction/jta/JtaTransactionManager.java spring-framework-3.2.18.RELEASE.hibernate4.3/spring-tx/src/main/java/org/springframework/transaction/jta/JtaTransactionManager.java
+--- spring-framework-3.2.18.RELEASE/spring-tx/src/main/java/org/springframework/transaction/jta/JtaTransactionManager.java	2016-12-21 19:42:08.000000000 +0100
++++ spring-framework-3.2.18.RELEASE.hibernate4.3/spring-tx/src/main/java/org/springframework/transaction/jta/JtaTransactionManager.java	2016-12-22 21:08:45.109820257 +0100
+@@ -28,7 +28,6 @@
+ import javax.transaction.NotSupportedException;
+ import javax.transaction.RollbackException;
+ import javax.transaction.Status;
+-import javax.transaction.Synchronization;
+ import javax.transaction.SystemException;
+ import javax.transaction.Transaction;
+ import javax.transaction.TransactionManager;
+@@ -50,7 +49,6 @@
+ import org.springframework.transaction.support.DefaultTransactionStatus;
+ import org.springframework.transaction.support.TransactionSynchronization;
+ import org.springframework.util.Assert;
+-import org.springframework.util.ClassUtils;
+ import org.springframework.util.StringUtils;
+ 
+ /**
+@@ -101,8 +99,8 @@
+  * JtaTransactionManager autodetects the TransactionSynchronizationRegistry and uses
+  * it for registering Spring-managed synchronizations when participating in an existing
+  * JTA transaction (e.g. controlled by EJB CMT). If no TransactionSynchronizationRegistry
+- * is available (or the JTA 1.1 API isn't available), then such synchronizations will be
+- * registered via the (non-EE) JTA TransactionManager handle.
++ * is available, then such synchronizations will be registered via the (non-EE) JTA
++ * TransactionManager handle.
+  *
+  * <p>This class is serializable. However, active synchronizations do not survive serialization.
+  *
+@@ -148,22 +146,6 @@
+ 			"java:comp/TransactionSynchronizationRegistry";
+ 
+ 
+-	private static final String TRANSACTION_SYNCHRONIZATION_REGISTRY_CLASS_NAME =
+-			"javax.transaction.TransactionSynchronizationRegistry";
+-
+-	private static Class<?> transactionSynchronizationRegistryClass;
+-
+-	static {
+-		try {
+-			transactionSynchronizationRegistryClass = ClassUtils.forName(
+-					TRANSACTION_SYNCHRONIZATION_REGISTRY_CLASS_NAME, JtaTransactionManager.class.getClassLoader());
+-		}
+-		catch (ClassNotFoundException ex) {
+-			// JTA 1.1 API not available... simply proceed the JTA 1.0 way.
+-		}
+-	}
+-
+-
+ 	private transient JndiTemplate jndiTemplate = new JndiTemplate();
+ 
+ 	private transient UserTransaction userTransaction;
+@@ -182,9 +164,11 @@
+ 
+ 	private boolean autodetectTransactionManager = true;
+ 
++	private transient TransactionSynchronizationRegistry transactionSynchronizationRegistry;
++
+ 	private String transactionSynchronizationRegistryName;
+ 
+-	private transient Object transactionSynchronizationRegistry;
++	private boolean autodetectTransactionSynchronizationRegistry = true;
+ 
+ 	private boolean allowCustomIsolationLevels = false;
+ 
+@@ -352,6 +336,28 @@
+ 	}
+ 
+ 	/**
++	 * Set the JTA 1.1 TransactionSynchronizationRegistry to use as direct reference.
++	 * <p>A TransactionSynchronizationRegistry allows for interposed registration
++	 * of transaction synchronizations, as an alternative to the regular registration
++	 * methods on the JTA TransactionManager API. Also, it is an official part of the
++	 * Java EE 5 platform, in contrast to the JTA TransactionManager itself.
++	 * <p>Note that the TransactionSynchronizationRegistry will be autodetected in JNDI and
++	 * also from the UserTransaction/TransactionManager object if implemented there as well.
++	 * @see #setTransactionSynchronizationRegistryName
++	 * @see #setAutodetectTransactionSynchronizationRegistry
++	 */
++	public void setTransactionSynchronizationRegistry(TransactionSynchronizationRegistry transactionSynchronizationRegistry) {
++		this.transactionSynchronizationRegistry = transactionSynchronizationRegistry;
++	}
++
++	/**
++	 * Return the JTA 1.1 TransactionSynchronizationRegistry that this transaction manager uses, if any.
++	 */
++	public TransactionSynchronizationRegistry getTransactionSynchronizationRegistry() {
++		return this.transactionSynchronizationRegistry;
++	}
++
++	/**
+ 	 * Set the JNDI name of the JTA TransactionManager.
+ 	 * <p>A TransactionManager is necessary for suspending and resuming transactions,
+ 	 * as this not supported by the UserTransaction interface.
+@@ -393,6 +399,20 @@
+ 	}
+ 
+ 	/**
++	 * Set whether to autodetect a JTA 1.1 TransactionSynchronizationRegistry object
++	 * at its default JDNI location ("java:comp/TransactionSynchronizationRegistry")
++	 * if the UserTransaction has also been obtained from JNDI, and also whether
++	 * to fall back to checking whether the JTA UserTransaction/TransactionManager
++	 * object implements the JTA TransactionSynchronizationRegistry interface too.
++	 * <p>Default is "true", autodetecting the TransactionSynchronizationRegistry
++	 * unless it has been specified explicitly. Can be turned off to delegate
++	 * synchronization registration to the regular JTA TransactionManager API.
++	 */
++	public void setAutodetectTransactionSynchronizationRegistry(boolean autodetectTransactionSynchronizationRegistry) {
++		this.autodetectTransactionSynchronizationRegistry = autodetectTransactionSynchronizationRegistry;
++	}
++
++	/**
+ 	 * Set whether to allow custom isolation levels to be specified.
+ 	 * <p>Default is "false", throwing an exception if a non-default isolation level
+ 	 * is specified for a transaction. Turn this flag on if affected resource adapters
+@@ -410,6 +430,7 @@
+ 	 * Initialize the UserTransaction as well as the TransactionManager handle.
+ 	 * @see #initUserTransactionAndTransactionManager()
+ 	 */
++	@Override
+ 	public void afterPropertiesSet() throws TransactionSystemException {
+ 		initUserTransactionAndTransactionManager();
+ 		checkUserTransactionAndTransactionManager();
+@@ -421,38 +442,36 @@
+ 	 * @throws TransactionSystemException if initialization failed
+ 	 */
+ 	protected void initUserTransactionAndTransactionManager() throws TransactionSystemException {
+-		// Fetch JTA UserTransaction from JNDI, if necessary.
+ 		if (this.userTransaction == null) {
++			// Fetch JTA UserTransaction from JNDI, if necessary.
+ 			if (StringUtils.hasLength(this.userTransactionName)) {
+ 				this.userTransaction = lookupUserTransaction(this.userTransactionName);
+ 				this.userTransactionObtainedFromJndi = true;
+ 			}
+ 			else {
+ 				this.userTransaction = retrieveUserTransaction();
++				if (this.userTransaction == null && this.autodetectUserTransaction) {
++					// Autodetect UserTransaction at its default JNDI location.
++					this.userTransaction = findUserTransaction();
++				}
+ 			}
+ 		}
+ 
+-		// Fetch JTA TransactionManager from JNDI, if necessary.
+ 		if (this.transactionManager == null) {
++			// Fetch JTA TransactionManager from JNDI, if necessary.
+ 			if (StringUtils.hasLength(this.transactionManagerName)) {
+ 				this.transactionManager = lookupTransactionManager(this.transactionManagerName);
+ 			}
+ 			else {
+ 				this.transactionManager = retrieveTransactionManager();
++				if (this.transactionManager == null && this.autodetectTransactionManager) {
++					// Autodetect UserTransaction object that implements TransactionManager,
++					// and check fallback JNDI locations otherwise.
++					this.transactionManager = findTransactionManager(this.userTransaction);
++				}
+ 			}
+ 		}
+ 
+-		// Autodetect UserTransaction at its default JNDI location.
+-		if (this.userTransaction == null && this.autodetectUserTransaction) {
+-			this.userTransaction = findUserTransaction();
+-		}
+-
+-		// Autodetect UserTransaction object that implements TransactionManager,
+-		// and check fallback JNDI locations otherwise.
+-		if (this.transactionManager == null && this.autodetectTransactionManager) {
+-			this.transactionManager = findTransactionManager(this.userTransaction);
+-		}
+-
+ 		// If only JTA TransactionManager specified, create UserTransaction handle for it.
+ 		if (this.userTransaction == null && this.transactionManager != null) {
+ 			this.userTransaction = buildUserTransaction(this.transactionManager);
+@@ -494,15 +513,20 @@
+ 	 * @throws TransactionSystemException if initialization failed
+ 	 */
+ 	protected void initTransactionSynchronizationRegistry() {
+-		if (StringUtils.hasLength(this.transactionSynchronizationRegistryName)) {
+-			this.transactionSynchronizationRegistry =
+-					lookupTransactionSynchronizationRegistry(this.transactionSynchronizationRegistryName);
+-		}
+-		else {
+-			this.transactionSynchronizationRegistry = retrieveTransactionSynchronizationRegistry();
+-			if (this.transactionSynchronizationRegistry == null) {
++		if (this.transactionSynchronizationRegistry == null) {
++			// Fetch JTA TransactionSynchronizationRegistry from JNDI, if necessary.
++			if (StringUtils.hasLength(this.transactionSynchronizationRegistryName)) {
+ 				this.transactionSynchronizationRegistry =
+-						findTransactionSynchronizationRegistry(this.userTransaction, this.transactionManager);
++						lookupTransactionSynchronizationRegistry(this.transactionSynchronizationRegistryName);
++			}
++			else {
++				this.transactionSynchronizationRegistry = retrieveTransactionSynchronizationRegistry();
++				if (this.transactionSynchronizationRegistry == null && this.autodetectTransactionSynchronizationRegistry) {
++					// Autodetect in JNDI if applicable, and check UserTransaction/TransactionManager
++					// object that implements TransactionSynchronizationRegistry otherwise.
++					this.transactionSynchronizationRegistry =
++							findTransactionSynchronizationRegistry(this.userTransaction, this.transactionManager);
++				}
+ 			}
+ 		}
+ 
+@@ -586,16 +610,12 @@
+ 	 * @see #setJndiTemplate
+ 	 * @see #setTransactionSynchronizationRegistryName
+ 	 */
+-	protected Object lookupTransactionSynchronizationRegistry(String registryName) throws TransactionSystemException {
+-		if (transactionSynchronizationRegistryClass == null) {
+-			throw new TransactionSystemException(
+-					"JTA 1.1 [" + TRANSACTION_SYNCHRONIZATION_REGISTRY_CLASS_NAME + "] API not available");
+-		}
++	protected TransactionSynchronizationRegistry lookupTransactionSynchronizationRegistry(String registryName) throws TransactionSystemException {
+ 		try {
+ 			if (logger.isDebugEnabled()) {
+ 				logger.debug("Retrieving JTA TransactionSynchronizationRegistry from JNDI location [" + registryName + "]");
+ 			}
+-			return getJndiTemplate().lookup(registryName, transactionSynchronizationRegistryClass);
++			return getJndiTemplate().lookup(registryName, TransactionSynchronizationRegistry.class);
+ 		}
+ 		catch (NamingException ex) {
+ 			throw new TransactionSystemException(
+@@ -637,7 +657,7 @@
+ 	 * or {@code null} if none found
+ 	 * @throws TransactionSystemException in case of errors
+ 	 */
+-	protected Object retrieveTransactionSynchronizationRegistry() throws TransactionSystemException {
++	protected TransactionSynchronizationRegistry retrieveTransactionSynchronizationRegistry() throws TransactionSystemException {
+ 		return null;
+ 	}
+ 
+@@ -712,24 +732,15 @@
+ 	 * or {@code null} if none found
+ 	 * @throws TransactionSystemException in case of errors
+ 	 */
+-	protected Object findTransactionSynchronizationRegistry(UserTransaction ut, TransactionManager tm)
++	protected TransactionSynchronizationRegistry findTransactionSynchronizationRegistry(UserTransaction ut, TransactionManager tm)
+ 			throws TransactionSystemException {
+ 
+-		if (transactionSynchronizationRegistryClass == null) {
+-			// JTA 1.1 API not present - skip.
+-			if (logger.isDebugEnabled()) {
+-				logger.debug("JTA 1.1 [" + TRANSACTION_SYNCHRONIZATION_REGISTRY_CLASS_NAME + "] API not available");
+-			}
+-			return null;
+-		}
+-
+-		// If we came here, we might be on Java EE 5, since the JTA 1.1 API is present.
+ 		if (this.userTransactionObtainedFromJndi) {
+ 			// UserTransaction has already been obtained from JNDI, so the
+ 			// TransactionSynchronizationRegistry probably sits there as well.
+ 			String jndiName = DEFAULT_TRANSACTION_SYNCHRONIZATION_REGISTRY_NAME;
+ 			try {
+-				Object tsr = getJndiTemplate().lookup(jndiName, transactionSynchronizationRegistryClass);
++				TransactionSynchronizationRegistry tsr = getJndiTemplate().lookup(jndiName, TransactionSynchronizationRegistry.class);
+ 				if (logger.isDebugEnabled()) {
+ 					logger.debug("JTA TransactionSynchronizationRegistry found at default JNDI location [" + jndiName + "]");
+ 				}
+@@ -742,14 +753,13 @@
+ 			}
+ 		}
+ 		// Check whether the UserTransaction or TransactionManager implements it...
+-		if (transactionSynchronizationRegistryClass.isInstance(ut)) {
+-			return ut;
++		if (ut instanceof TransactionSynchronizationRegistry) {
++			return (TransactionSynchronizationRegistry) ut;
+ 		}
+-		if (transactionSynchronizationRegistryClass.isInstance(tm)) {
+-			return tm;
++		if (tm instanceof TransactionSynchronizationRegistry) {
++			return (TransactionSynchronizationRegistry) tm;
+ 		}
+-		// OK, so no JTA 1.1 TransactionSynchronizationRegistry is available,
+-		// despite the API being present...
++		// OK, so no JTA 1.1 TransactionSynchronizationRegistry is available...
+ 		return null;
+ 	}
+ 
+@@ -1136,7 +1146,7 @@
+ 
+ 		if (this.transactionSynchronizationRegistry != null) {
+ 			// JTA 1.1 TransactionSynchronizationRegistry available - use it.
+-			new InterposedSynchronizationDelegate().registerInterposedSynchronization(
++			this.transactionSynchronizationRegistry.registerInterposedSynchronization(
+ 					new JtaAfterCompletionSynchronization(synchronizations));
+ 		}
+ 
+@@ -1163,6 +1173,7 @@
+ 	// Implementation of TransactionFactory interface
+ 	//---------------------------------------------------------------------
+ 
++	@Override
+ 	public Transaction createTransaction(String name, int timeout) throws NotSupportedException, SystemException {
+ 		TransactionManager tm = getTransactionManager();
+ 		Assert.state(tm != null, "No JTA TransactionManager available");
+@@ -1173,6 +1184,7 @@
+ 		return new ManagedTransactionAdapter(tm);
+ 	}
+ 
++	@Override
+ 	public boolean supportsResourceAdapterManagedTransactions() {
+ 		return false;
+ 	}
+@@ -1194,16 +1206,4 @@
+ 		initTransactionSynchronizationRegistry();
+ 	}
+ 
+-
+-	/**
+-	 * Inner class to avoid a direct dependency on the JTA 1.1 API
+-	 * (javax.transaction.TransactionSynchronizationRegistry interface).
+-	 */
+-	private class InterposedSynchronizationDelegate {
+-
+-		public void registerInterposedSynchronization(Synchronization synch) {
+-			((TransactionSynchronizationRegistry) transactionSynchronizationRegistry).registerInterposedSynchronization(synch);
+-		}
+-	}
+-
+ }

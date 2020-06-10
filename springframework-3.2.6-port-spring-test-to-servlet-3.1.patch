@@ -1,0 +1,293 @@
+diff --git a/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletInputStream.java b/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletInputStream.java
+index f97e60e..74703d6 100644
+--- a/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletInputStream.java
++++ b/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletInputStream.java
+@@ -18,6 +18,8 @@ package org.springframework.mock.web;
+ 
+ import java.io.IOException;
+ import java.io.InputStream;
++
++import javax.servlet.ReadListener;
+ import javax.servlet.ServletInputStream;
+ 
+ import org.springframework.util.Assert;
+@@ -63,4 +65,18 @@ public class DelegatingServletInputStream extends ServletInputStream {
+ 		this.sourceStream.close();
+ 	}
+ 
++    @Override
++    public boolean isFinished() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    @Override
++    public boolean isReady() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    @Override
++    public void setReadListener(ReadListener arg0) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
+ }
+diff --git a/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletOutputStream.java b/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletOutputStream.java
+index 2369417..f0d7475 100644
+--- a/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletOutputStream.java
++++ b/spring-test/src/main/java/org/springframework/mock/web/DelegatingServletOutputStream.java
+@@ -18,7 +18,9 @@ package org.springframework.mock.web;
+ 
+ import java.io.IOException;
+ import java.io.OutputStream;
++
+ import javax.servlet.ServletOutputStream;
++import javax.servlet.WriteListener;
+ 
+ import org.springframework.util.Assert;
+ 
+@@ -68,4 +70,13 @@ public class DelegatingServletOutputStream extends ServletOutputStream {
+ 		this.targetStream.close();
+ 	}
+ 
++    @Override
++    public boolean isReady() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    @Override
++    public void setWriteListener(WriteListener arg0) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
+ }
+diff --git a/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletRequest.java b/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletRequest.java
+index 178dffd..e23ca59 100644
+--- a/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletRequest.java
++++ b/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletRequest.java
+@@ -36,14 +36,21 @@ import java.util.List;
+ import java.util.Locale;
+ import java.util.Map;
+ import java.util.Set;
++
++import javax.servlet.AsyncContext;
++import javax.servlet.DispatcherType;
+ import javax.servlet.RequestDispatcher;
+ import javax.servlet.ServletContext;
+ import javax.servlet.ServletException;
+ import javax.servlet.ServletInputStream;
++import javax.servlet.ServletRequest;
++import javax.servlet.ServletResponse;
+ import javax.servlet.http.Cookie;
+ import javax.servlet.http.HttpServletRequest;
+ import javax.servlet.http.HttpServletResponse;
+ import javax.servlet.http.HttpSession;
++import javax.servlet.http.HttpUpgradeHandler;
++import javax.servlet.http.Part;
+ 
+ import org.springframework.util.Assert;
+ import org.springframework.util.LinkedCaseInsensitiveMap;
+@@ -914,4 +921,49 @@ public class MockHttpServletRequest implements HttpServletRequest {
+ 		this.authType = null;
+ 	}
+ 
++    public AsyncContext startAsync() throws IllegalStateException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public AsyncContext startAsync(ServletRequest servletRequest,
++            ServletResponse servletResponse) throws IllegalStateException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public boolean isAsyncStarted() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public boolean isAsyncSupported() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public AsyncContext getAsyncContext() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public DispatcherType getDispatcherType() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Collection<Part> getParts() throws IOException, ServletException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Part getPart(String name) throws IOException, ServletException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public long getContentLengthLong() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public String changeSessionId() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public <T extends HttpUpgradeHandler> T upgrade(Class<T> arg0)
++            throws IOException, ServletException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
+ }
+diff --git a/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletResponse.java b/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletResponse.java
+index b575c40..52bf4db 100644
+--- a/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletResponse.java
++++ b/spring-test/src/main/java/org/springframework/mock/web/MockHttpServletResponse.java
+@@ -29,6 +29,7 @@ import java.util.Collections;
+ import java.util.List;
+ import java.util.Locale;
+ import java.util.Map;
++
+ import javax.servlet.ServletOutputStream;
+ import javax.servlet.http.Cookie;
+ import javax.servlet.http.HttpServletResponse;
+@@ -600,4 +601,8 @@ public class MockHttpServletResponse implements HttpServletResponse {
+ 		}
+ 	}
+ 
++
++    public void setContentLengthLong(long arg0) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
+ }
+diff --git a/spring-test/src/main/java/org/springframework/mock/web/MockServletContext.java b/spring-test/src/main/java/org/springframework/mock/web/MockServletContext.java
+index 49b49e5..35303d8 100644
+--- a/spring-test/src/main/java/org/springframework/mock/web/MockServletContext.java
++++ b/spring-test/src/main/java/org/springframework/mock/web/MockServletContext.java
+@@ -23,20 +23,29 @@ import java.net.MalformedURLException;
+ import java.net.URL;
+ import java.util.Collections;
+ import java.util.Enumeration;
++import java.util.EventListener;
+ import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.LinkedHashMap;
+ import java.util.LinkedHashSet;
+ import java.util.Map;
+ import java.util.Set;
++
+ import javax.activation.FileTypeMap;
++import javax.servlet.Filter;
++import javax.servlet.FilterRegistration;
+ import javax.servlet.RequestDispatcher;
+ import javax.servlet.Servlet;
+ import javax.servlet.ServletContext;
++import javax.servlet.ServletException;
++import javax.servlet.ServletRegistration;
++import javax.servlet.ServletRegistration.Dynamic;
++import javax.servlet.SessionCookieConfig;
++import javax.servlet.SessionTrackingMode;
++import javax.servlet.descriptor.JspConfigDescriptor;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+-
+ import org.springframework.core.io.DefaultResourceLoader;
+ import org.springframework.core.io.Resource;
+ import org.springframework.core.io.ResourceLoader;
+@@ -496,4 +505,100 @@ public class MockServletContext implements ServletContext {
+ 		}
+ 	}
+ 
++
++    public Dynamic addServlet(String servletName, String className) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Dynamic addServlet(String servletName, Servlet servlet) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Dynamic addServlet(String servletName,
++            Class<? extends Servlet> servletClass) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public <T extends Servlet> T createServlet(Class<T> clazz)
++            throws ServletException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public ServletRegistration getServletRegistration(String servletName) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Map<String, ? extends ServletRegistration> getServletRegistrations() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public javax.servlet.FilterRegistration.Dynamic addFilter(
++            String filterName, String className) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public javax.servlet.FilterRegistration.Dynamic addFilter(
++            String filterName, Filter filter) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public javax.servlet.FilterRegistration.Dynamic addFilter(
++            String filterName, Class<? extends Filter> filterClass) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public <T extends Filter> T createFilter(Class<T> clazz)
++            throws ServletException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public FilterRegistration getFilterRegistration(String filterName) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Map<String, ? extends FilterRegistration> getFilterRegistrations() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public SessionCookieConfig getSessionCookieConfig() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public void setSessionTrackingModes(
++            Set<SessionTrackingMode> sessionTrackingModes) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Set<SessionTrackingMode> getDefaultSessionTrackingModes() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public Set<SessionTrackingMode> getEffectiveSessionTrackingModes() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public void addListener(String className) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public <T extends EventListener> void addListener(T t) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public void addListener(Class<? extends EventListener> listenerClass) {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public <T extends EventListener> T createListener(Class<T> clazz)
++            throws ServletException {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public JspConfigDescriptor getJspConfigDescriptor() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
++
++    public String getVirtualServerName() {
++        throw new UnsupportedOperationException("Not implemented yet");
++    }
+ }
