@@ -1,6 +1,6 @@
 Name:                springframework
 Version:             3.2.18
-Release:             7
+Release:             8
 Summary:             The Spring Java Application Framework
 License:             ASL 2.0
 URL:                 http://projects.spring.io/spring-framework/
@@ -33,6 +33,7 @@ Patch7:              springframework-3.2.14-jopt-simple.patch
 Patch8:              springframework-3.2.14-build-with-tomcat8.patch
 Patch9:              springframework-3.2.18-hibernate4.3.patch
 Patch10:             CVE-2020-5421.patch
+patch11:	     CVE-2016-5007.patch
 BuildRequires:       maven-local mvn(aopalliance:aopalliance) mvn(c3p0:c3p0) mvn(com.caucho:hessian)
 BuildRequires:       mvn(com.fasterxml.jackson.core:jackson-databind) mvn(com.h2database:h2)
 BuildRequires:       mvn(com.jamonapi:jamon) mvn(com.rometools:rome)
@@ -364,6 +365,9 @@ done
 %files web -f .mfiles-spring-web
 
 %changelog
+* Fri Oct 29 2021 houyingchao <houyingchao@huawei.com> - 3.2.18-8
+- Fix CVE-2016-5007
+
 * Thu Dec 17 2020 caodongxia <caodongxia@huawei.com> - 3.2.18-7
 - Fix CVE-2020-5421
 
