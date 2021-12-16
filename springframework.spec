@@ -1,6 +1,6 @@
 Name:                springframework
 Version:             3.2.18
-Release:             8
+Release:             9
 Summary:             The Spring Java Application Framework
 License:             ASL 2.0
 URL:                 http://projects.spring.io/spring-framework/
@@ -365,6 +365,9 @@ done
 %files web -f .mfiles-spring-web
 
 %changelog
+* Thu Dec 16 2021 wangkai <wangkai385@huawei.com> - 3.2.18-9
+- This package depends on log4j.After the log4j vulnerability CVE-2021-44228 is fixed,the version needs to be rebuild.
+
 * Fri Oct 29 2021 houyingchao <houyingchao@huawei.com> - 3.2.18-8
 - Fix CVE-2016-5007
 
